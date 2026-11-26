@@ -6,13 +6,12 @@
 // 4) Switch the monitor back to the mode remembered in step 1
 //
 // Args:          --game <package>            (required; the game's package name, e.g. com.example.game)
-//                --width <px> --height <px>   (the resolution to launch the game at;
-//                without them the resolution is left as is and only steps 2-3 run)
-// Optional args: --monitor <id> (default: primary monitor; a stable monitor ID such as
-//                  DEL428C#5&168f06e6&4&UID4357, matched against the monitor's device ID, so it
-//                  survives \\.\DISPLAYn renumbering)
-//                --hz (default: the monitor's current refresh rate)
-//                --settle 0 (extra seconds to wait after the game window appears)  --timeout 90
+//                <W>x<H>[@Hz]                 (the resolution to launch the game at, e.g. 3840x1728@144;
+//                also --width <px> --height <px> --hz <rate>; without them the resolution is left as is
+//                and only steps 2-3 run)
+//                The monitor that supports the resolution is found automatically: the primary monitor
+//                is checked first, then the other monitors.
+// Optional args: --settle 0 (extra seconds to wait after the game window appears)  --timeout 90
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -47,20 +46,6 @@ static class GpbLauncher
 
     delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
 
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    struct DISPLAY_DEVICE
-    {
-        public int cb;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceString;
-        public int StateFlags;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceID;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceKey;
-    }
-    const int DISPLAY_DEVICE_ACTIVE = 0x1;
-    const uint EDD_GET_DEVICE_INTERFACE_NAME = 0x1;
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool EnumDisplayDevices(string dev, uint i, ref DISPLAY_DEVICE dd, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool EnumDisplaySettings(string dev, int mode, ref DEVMODE dm);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int ChangeDisplaySettingsEx(string dev, ref DEVMODE dm, IntPtr hwnd, uint flags, IntPtr lParam);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int ChangeDisplaySettingsEx(string dev, IntPtr dm, IntPtr hwnd, uint flags, IntPtr lParam);
@@ -73,68 +58,104 @@ static class GpbLauncher
     [STAThread]
     static int Main(string[] args)
     {
-        string device = Screen.PrimaryScreen.DeviceName;
-        string monitor = null;
+        string device = null;
         string game = null;
         int width = 0, height = 0, hz = 0, settle = 0, timeout = 90;
-        for (int i = 0; i + 1 < args.Length; i += 2)
+        for (int i = 0; i < args.Length; i++)
         {
-            string v = args[i + 1];
             switch (args[i].ToLowerInvariant())
             {
-                case "--game": game = v; break;
-                case "--monitor": monitor = v; break;
-                case "--width": width = int.Parse(v); break;
-                case "--height": height = int.Parse(v); break;
-                case "--hz": hz = int.Parse(v); break;
-                case "--settle": settle = int.Parse(v); break;
-                case "--timeout": timeout = int.Parse(v); break;
+                case "--game": if (i + 1 < args.Length) game = args[++i]; break;
+                case "--width": if (i + 1 < args.Length) width = int.Parse(args[++i]); break;
+                case "--height": if (i + 1 < args.Length) height = int.Parse(args[++i]); break;
+                case "--hz": if (i + 1 < args.Length) hz = int.Parse(args[++i]); break;
+                case "--settle": if (i + 1 < args.Length) settle = int.Parse(args[++i]); break;
+                case "--timeout": if (i + 1 < args.Length) timeout = int.Parse(args[++i]); break;
+                default:
+                    // Shorthand resolution, e.g. 3840x1728 or 3840x1728@144.
+                    Match m = Regex.Match(args[i], @"^(\d+)x(\d+)(?:@(\d+))?$", RegexOptions.IgnoreCase);
+                    if (m.Success)
+                    {
+                        width = int.Parse(m.Groups[1].Value);
+                        height = int.Parse(m.Groups[2].Value);
+                        if (m.Groups[3].Success) hz = int.Parse(m.Groups[3].Value);
+                    }
+                    break;
             }
         }
 
         if (string.IsNullOrEmpty(game) || !Regex.IsMatch(game, "^[A-Za-z0-9._]+$"))
         {
-            Error("실행할 게임을 지정하세요.\n예: GpbLauncher.exe --game com.example.game");
+            Error("실행할 게임을 지정하세요.\n예: GpbLauncher.exe --game com.example.game 3840x1728@144");
             return 1;
         }
         string uri = "googleplaygames://launch/?id=" + game + "&lid=1&pid=1";
-
-        if (!string.IsNullOrEmpty(monitor))
-        {
-            device = FindMonitorDevice(monitor);
-            if (device == null)
-            {
-                Error("연결된 모니터 중에 " + monitor + "를 찾지 못했습니다.\nbuild.ps1을 다시 실행해서 바로가기를 새로 만드세요.");
-                return 1;
-            }
-        }
 
         // No resolution given: keep the current mode and only launch the game.
         bool change = width > 0 || height > 0;
         if (change && (width <= 0 || height <= 0))
         {
-            Error("--width와 --height를 함께 지정하세요.\n예: GpbLauncher.exe --game com.example.game --width 3840 --height 1728");
+            Error("--width와 --height를 함께 지정하세요.\n예: GpbLauncher.exe --game com.example.game 3840x1728@144");
             return 1;
+        }
+
+        // Find a monitor that supports the mode: the primary monitor first, then the others.
+        if (change)
+        {
+            Screen primary = Screen.PrimaryScreen;
+            Screen[] screens = Screen.AllScreens;
+            Screen[] ordered = new Screen[screens.Length];
+            int n = 0;
+            ordered[n++] = primary;
+            foreach (Screen s in screens)
+                if (!string.Equals(s.DeviceName, primary.DeviceName, StringComparison.OrdinalIgnoreCase))
+                    ordered[n++] = s;
+
+            bool found = false;
+            foreach (Screen s in ordered)
+            {
+                int tryHz = hz;
+                if (tryHz <= 0)
+                {
+                    DEVMODE cur = NewDevMode();
+                    tryHz = EnumDisplaySettings(s.DeviceName, -1, ref cur) ? cur.dmDisplayFrequency : 0; // -1 = ENUM_CURRENT_SETTINGS
+                }
+                DEVMODE probe = NewDevMode();
+                if (FindMode(s.DeviceName, width, height, tryHz, ref probe))
+                {
+                    device = s.DeviceName;
+                    hz = tryHz;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+            {
+                Error(string.Format("연결된 모니터 중에 {0}x{1}{2} 해상도를 지원하는 모니터가 없습니다.\nNVIDIA 앱 같은 그래픽 설정에서 사용자 지정 해상도를 확인하세요.", width, height, hz > 0 ? "@" + hz : ""));
+                return 1;
+            }
         }
 
         // The mode to come back to (a -> b -> a).
         DEVMODE original = NewDevMode();
-        if (!EnumDisplaySettings(device, -1, ref original)) // -1 = ENUM_CURRENT_SETTINGS
+        if (change)
         {
-            Error(device + "의 현재 해상도를 읽지 못했습니다.");
-            return 1;
-        }
-        original.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
-        if (hz == 0) hz = original.dmDisplayFrequency;
-        if (change && original.dmPelsWidth == width && original.dmPelsHeight == height && original.dmDisplayFrequency == hz)
-        {
-            // Already at the target (e.g. a previous run was interrupted).
-            // Coming back to "current" would keep the target, so use the saved Windows mode instead.
-            DEVMODE saved = NewDevMode();
-            if (EnumDisplaySettings(device, -2, ref saved)) // -2 = ENUM_REGISTRY_SETTINGS
+            if (!EnumDisplaySettings(device, -1, ref original)) // -1 = ENUM_CURRENT_SETTINGS
             {
-                original = saved;
-                original.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
+                Error(device + "의 현재 해상도를 읽지 못했습니다.");
+                return 1;
+            }
+            original.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
+            if (original.dmPelsWidth == width && original.dmPelsHeight == height && original.dmDisplayFrequency == hz)
+            {
+                // Already at the target (e.g. a previous run was interrupted).
+                // Coming back to "current" would keep the target, so use the saved Windows mode instead.
+                DEVMODE saved = NewDevMode();
+                if (EnumDisplaySettings(device, -2, ref saved)) // -2 = ENUM_REGISTRY_SETTINGS
+                {
+                    original = saved;
+                    original.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
+                }
             }
         }
 
@@ -203,33 +224,6 @@ static class GpbLauncher
                 ChangeDisplaySettingsEx(device, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero);
             if (message != null) Error(message);
         }
-    }
-
-    // \\.\DISPLAYn of the active monitor whose device ID contains the given monitor ID, or null.
-    static string FindMonitorDevice(string monitorId)
-    {
-        for (uint i = 0; i < 64; i++)
-        {
-            DISPLAY_DEVICE adapter = NewDisplayDevice();
-            if (!EnumDisplayDevices(null, i, ref adapter, 0)) break;
-            if ((adapter.StateFlags & DISPLAY_DEVICE_ACTIVE) == 0) continue;
-            for (uint j = 0; j < 16; j++)
-            {
-                DISPLAY_DEVICE mon = NewDisplayDevice();
-                if (!EnumDisplayDevices(adapter.DeviceName, j, ref mon, EDD_GET_DEVICE_INTERFACE_NAME)) break;
-                if ((mon.StateFlags & DISPLAY_DEVICE_ACTIVE) != 0 &&
-                    mon.DeviceID != null && mon.DeviceID.IndexOf(monitorId, StringComparison.OrdinalIgnoreCase) >= 0)
-                    return adapter.DeviceName;
-            }
-        }
-        return null;
-    }
-
-    static DISPLAY_DEVICE NewDisplayDevice()
-    {
-        DISPLAY_DEVICE dd = new DISPLAY_DEVICE();
-        dd.cb = Marshal.SizeOf(typeof(DISPLAY_DEVICE));
-        return dd;
     }
 
     static DEVMODE NewDevMode()

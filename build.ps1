@@ -1,7 +1,7 @@
 ﻿# Builds one exe per game, named after the game, with the game's icon embedded, using the
-# .NET Framework compiler that ships with Windows. It asks for the monitor, the game (from the
-# Google Play Games Start Menu shortcuts), and the target resolution (width x height @ refresh
-# rate), and creates a desktop shortcut that runs that exe.
+# .NET Framework compiler that ships with Windows. It asks for the game (from the Google Play
+# Games Start Menu shortcuts) and the target resolution (width x height @ refresh rate), and
+# creates a desktop shortcut that runs that exe.
 # Saved as UTF-8 with BOM so Windows PowerShell 5.1 reads the Korean text correctly.
 $ErrorActionPreference = 'Stop'
 
@@ -36,65 +36,10 @@ public static class DisplayModes {
         }
         return r;
     }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    public struct DISPLAY_DEVICE {
-        public int cb;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceString;
-        public int StateFlags;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceID;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceKey;
-    }
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool EnumDisplayDevices(string dev, uint i, ref DISPLAY_DEVICE dd, uint flags);
-    static DISPLAY_DEVICE NewDD() { var d = new DISPLAY_DEVICE(); d.cb = Marshal.SizeOf(typeof(DISPLAY_DEVICE)); return d; }
-    // Active monitors as "\.\DISPLAYn|monitor name|stable id|1 if primary".
-    // The stable id is the part of the device path between "DISPLAY#" and "#{", e.g. DEL428C#5&168f06e6&4&UID4357.
-    public static System.Collections.Generic.List<string> Monitors() {
-        var r = new System.Collections.Generic.List<string>();
-        for (uint i = 0; i < 64; i++) {
-            var a = NewDD(); if (!EnumDisplayDevices(null, i, ref a, 0)) break;
-            if ((a.StateFlags & 1) == 0) continue;
-            for (uint j = 0; j < 16; j++) {
-                var m = NewDD(); if (!EnumDisplayDevices(a.DeviceName, j, ref m, 1)) break;
-                if ((m.StateFlags & 1) == 0 || string.IsNullOrEmpty(m.DeviceID)) continue;
-                string id = m.DeviceID;
-                int s = id.IndexOf("DISPLAY#", StringComparison.OrdinalIgnoreCase); if (s >= 0) id = id.Substring(s + 8);
-                int e = id.IndexOf("#{"); if (e >= 0) id = id.Substring(0, e);
-                r.Add(a.DeviceName + "|" + m.DeviceString + "|" + id + "|" + ((a.StateFlags & 4) != 0 ? "1" : "0"));
-                break;
-            }
-        }
-        return r;
-    }
 }
 '@
 
-    # --- Monitor choice. The shortcut stores the stable monitor id, not \.\DISPLAYn, which can be renumbered.
-    $mons = @([DisplayModes]::Monitors() | ForEach-Object {
-        $p = $_ -split '\|'; $c = [DisplayModes]::Current($p[0])
-        [pscustomobject]@{ Device = $p[0]; Name = $p[1]; Id = $p[2]; Primary = ($p[3] -eq '1'); Mode = "$($c[0])x$($c[1])@$($c[2])" }
-    } | Sort-Object @{ e = 'Primary'; Descending = $true })
-    if ($mons.Count -eq 0) { throw '연결된 모니터를 찾지 못했습니다.' }
-    if ($mons.Count -eq 1) {
-        $mon = $mons[0]
-        Write-Host "모니터      : $($mon.Name)"
-    }
-    else {
-        Write-Host '모니터:'
-        for ($i = 0; $i -lt $mons.Count; $i++) {
-            $m = $mons[$i]
-            Write-Host ('  {0,3})  {1}  {2}{3}' -f ($i + 1), $m.Name, $m.Mode, $(if ($m.Primary) { '  (주 모니터)' } else { '' }))
-        }
-        while ($true) {
-            $ans = (Read-Host '모니터 번호 (엔터 = 주 모니터)').Trim()
-            if (-not $ans) { $mon = $mons[0]; break }
-            if ($ans -match '^\d+$' -and [int]$ans -ge 1 -and [int]$ans -le $mons.Count) { $mon = $mons[[int]$ans - 1]; break }
-            Write-Host '목록의 번호를 입력하세요.' -ForegroundColor Yellow
-        }
-        Write-Host ''
-    }
-    $device = $mon.Device
+    $device = [System.Windows.Forms.Screen]::PrimaryScreen.DeviceName
 
     # --- Game choice: Google Play Games puts one Start Menu shortcut per installed game.
     # The shortcut's link target carries the package name, and its icon is embedded into our exe.
@@ -174,9 +119,14 @@ public static class DisplayModes {
             $ihz = (Read-Host "주사율 [$curHz]").Trim(); if (-not $ihz) { $ihz = "$curHz" }
             $pick = $null
             if ($iw -match '^\d+$' -and $ih -match '^\d+$' -and $ihz -match '^\d+$') {
-                $pick = $all | Where-Object { $_.W -eq [int]$iw -and $_.H -eq [int]$ih -and $_.Hz -eq [int]$ihz } | Select-Object -First 1
+                $target = "${iw}x${ih}@${ihz}"
+                $onAny = $false
+                foreach ($s in [System.Windows.Forms.Screen]::AllScreens) {
+                    if ([DisplayModes]::Modes($s.DeviceName) -contains $target) { $onAny = $true; break }
+                }
+                if ($onAny) { $pick = [pscustomobject]@{ W = [int]$iw; H = [int]$ih; Hz = [int]$ihz } }
             }
-            if (-not $pick) { throw "${iw}x${ih}@${ihz} 해상도가 이 모니터에 없습니다. (GPU 제어판에서 사용자 지정 해상도를 먼저 만드세요)" }
+            if (-not $pick) { throw "${iw}x${ih}@${ihz} 해상도가 연결된 모니터에 없습니다. (GPU 제어판에서 사용자 지정 해상도를 먼저 만드세요)" }
             if (Test-Current $pick) { throw '현재 해상도와 같습니다.' }
         }
         else { $pick = $list[[int]$ans - 1] }
@@ -185,7 +135,6 @@ public static class DisplayModes {
 
         Write-Host ''
         Write-Host "  게임             : $($game.Name)"
-        Write-Host "  모니터           : $($mon.Name)"
         Write-Host "  게임 실행 해상도 : ${w}x${h}@${hz} ($(Format-Ratio $w $h))"
         Write-Host "  되돌아갈 해상도  : 실행할 때의 해상도 (지금은 ${curW}x${curH}@${curHz})"
         Write-Host "  바로가기         : 바탕화면\${safeName} (${w}x${h}@${hz})"
@@ -207,8 +156,7 @@ public static class DisplayModes {
     $sh = New-Object -ComObject WScript.Shell
     $lnk = $sh.CreateShortcut($lnkPath)
     $lnk.TargetPath = $exe
-    $lnk.Arguments = "--game $($game.Package) --width $w --height $h --hz $hz"
-    if ($mons.Count -gt 1) { $lnk.Arguments += " --monitor $($mon.Id)" }
+    $lnk.Arguments = "--game $($game.Package) ${w}x${h}@${hz}"
     $lnk.WorkingDirectory = $here
     $lnk.IconLocation = "$exe,0"
     $lnk.Description = "${w}x${h}@${hz} 화면으로 실행"
