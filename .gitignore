@@ -1,0 +1,4 @@
+# Build output (build.ps1 recreates these)
+TrickcalLauncher.exe
+# Game icon copied from the Google Play Games data folder at build time
+trickcal.ico
