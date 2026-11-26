@@ -11,7 +11,7 @@
 //                and only steps 2-3 run)
 //                The monitor that supports the resolution is found automatically: the primary monitor
 //                is checked first, then the other monitors.
-// Optional args: --settle 0 (extra seconds to wait after the game window appears)  --timeout 90
+// Optional args: --settle 0 (extra seconds to wait before restoring the resolution)  --timeout 90
 //
 // build.ps1 embeds the game package into the exe (AssemblyMetadata "GpbGame"). Run the exe with no
 // arguments to open "바로가기 만들기": pick a resolution and it writes "<exe name> (WxH@Hz).lnk" next
@@ -197,6 +197,15 @@ static class GpbLauncher
         }
 
         string message = null; // shown after the resolution is restored, so a dialog never holds the switched mode
+        bool restored = !change;
+        Action restore = () =>
+        {
+            if (restored) return;
+            restored = true;
+            // Back to the mode the monitor had before launch; fall back to the saved Windows mode.
+            if (ChangeDisplaySettingsEx(device, ref original, IntPtr.Zero, 0, IntPtr.Zero) != DISP_CHANGE_SUCCESSFUL)
+                ChangeDisplaySettingsEx(device, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero);
+        };
         try
         {
             if (change) Thread.Sleep(300); // let the desktop settle before the game reads the screen size
@@ -205,11 +214,12 @@ static class GpbLauncher
             else
                 Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
 
+            // The game window takes its ratio from the screen when it is created, so keep the mode until it shows up.
             DateTime deadline = DateTime.Now.AddSeconds(timeout);
-            while (DateTime.Now < deadline && FindWindow("crosvm", null) == IntPtr.Zero)
-                Thread.Sleep(100);
+            IntPtr gameWindow = IntPtr.Zero;
+            while (DateTime.Now < deadline && (gameWindow = FindWindow("crosvm", null)) == IntPtr.Zero)
+                Thread.Sleep(50);
 
-            IntPtr gameWindow = FindWindow("crosvm", null);
             if (gameWindow == IntPtr.Zero)
             {
                 message = timeout + "초 안에 게임 창이 뜨지 않았습니다." + (change ? " 해상도를 되돌렸습니다." : "");
@@ -224,7 +234,8 @@ static class GpbLauncher
 
             if (settle > 0) Thread.Sleep(settle * 1000);
 
-            // Restore happens in finally right after this; WM_CLOSE is posted (non-blocking).
+            // Restore first, then close the Google Play Games window right away (WM_CLOSE is posted, non-blocking).
+            restore();
             IntPtr gpg = FindWindow("client", "Google Play Games");
             if (gpg != IntPtr.Zero)
                 PostMessage(gpg, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
@@ -237,9 +248,7 @@ static class GpbLauncher
         }
         finally
         {
-            // Back to the mode the monitor had before launch; fall back to the saved Windows mode.
-            if (change && ChangeDisplaySettingsEx(device, ref original, IntPtr.Zero, 0, IntPtr.Zero) != DISP_CHANGE_SUCCESSFUL)
-                ChangeDisplaySettingsEx(device, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero);
+            restore();
             if (message != null) Error(message);
         }
     }
@@ -281,9 +290,17 @@ static class GpbLauncher
         return ordered;
     }
 
-    // Ratio as "x:9" (20:9, 21.33:9, 16:9), never reduced to odd pairs like 41:18.
+    // Common ratio names and their values. 21:9 monitors are really 64:27 (2560x1080) or 43:18 (3440x1440).
+    static readonly string[] RatioNames = { "5:4", "4:3", "3:2", "16:10", "16:9", "18:9", "20:9", "21:9", "32:9" };
+    static readonly double[] RatioValues = { 5 / 4.0, 4 / 3.0, 3 / 2.0, 16 / 10.0, 16 / 9.0, 18 / 9.0, 20 / 9.0, 64 / 27.0, 32 / 9.0 };
+
+    // Ratio by its common name when within 1% of one (2560x1600 -> 16:10, 3440x1440 -> 21:9, 1366x768 -> 16:9),
+    // otherwise as "x:9" (1600x1024 -> 14.06:9), never reduced to odd pairs like 41:18.
     static string Ratio(int w, int h)
     {
+        double r = (double)w / h;
+        for (int i = 0; i < RatioValues.Length; i++)
+            if (Math.Abs(r / RatioValues[i] - 1) <= 0.01) return RatioNames[i];
         return Math.Round(w * 9.0 / h, 2).ToString("0.##", CultureInfo.InvariantCulture) + ":9";
     }
 
