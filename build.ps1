@@ -1,5 +1,6 @@
-﻿# Builds TrickcalLauncher.exe with the .NET Framework compiler that ships with Windows,
-# asks for the target resolution (width x height @ refresh rate), and creates a desktop shortcut that uses it.
+﻿# Builds GpbLauncher.exe with the .NET Framework compiler that ships with Windows,
+# asks for the monitor, the game (from the Google Play Games Start Menu shortcuts), and the
+# target resolution (width x height @ refresh rate), and creates a desktop shortcut that uses them.
 # Saved as UTF-8 with BOM so Windows PowerShell 5.1 reads the Korean text correctly.
 $ErrorActionPreference = 'Stop'
 
@@ -8,7 +9,7 @@ try {
     $csc  = @("$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe", "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe") |
             Where-Object { Test-Path $_ } | Select-Object -First 1
     if (-not $csc) { throw 'csc.exe(.NET Framework 4)를 찾을 수 없습니다.' }
-    $exe  = Join-Path $here 'TrickcalLauncher.exe'
+    $exe  = Join-Path $here 'GpbLauncher.exe'
 
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type @'
@@ -95,6 +96,47 @@ public static class DisplayModes {
     }
     $device = $mon.Device
 
+    # --- Game choice: Google Play Games puts one Start Menu shortcut per installed game.
+    # The shortcut's link target carries the package name, and its icon can be copied for our own shortcut.
+    $games = @()
+    $dirs = @(
+        (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Google Play Games'),
+        (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Google Play Games')
+    )
+    foreach ($dir in $dirs) {
+        if (-not (Test-Path $dir)) { continue }
+        foreach ($f in Get-ChildItem $dir -Filter '*.lnk' -ErrorAction SilentlyContinue) {
+            $raw = [Text.Encoding]::Unicode.GetString([IO.File]::ReadAllBytes($f.FullName))
+            $m = [regex]::Match($raw, 'googleplaygames://launch/\?id=([A-Za-z0-9._]+)')
+            if (-not $m.Success) { continue }
+            $pkg = $m.Groups[1].Value
+            if ($games | Where-Object { $_.Package -eq $pkg }) { continue }
+            $im = [regex]::Match($raw, '[A-Za-z]:\\[^\x00]*?\.ico')
+            $ico = if ($im.Success) { $im.Value } else { $null }
+            $games += [pscustomobject]@{ Package = $pkg; Name = $f.BaseName; Icon = $ico }
+        }
+    }
+    $games = @($games | Sort-Object Name)
+    if ($games.Count -eq 0) { throw '구플베 게임 바로가기를 찾지 못했습니다. 구플베에서 게임을 설치하면 시작 메뉴에 바로가기가 생깁니다.' }
+    if ($games.Count -eq 1) {
+        $game = $games[0]
+        Write-Host "게임        : $($game.Name)"
+    }
+    else {
+        Write-Host '게임:'
+        for ($i = 0; $i -lt $games.Count; $i++) {
+            Write-Host ('  {0,3})  {1}' -f ($i + 1), $games[$i].Name)
+        }
+        while ($true) {
+            $ans = (Read-Host '게임 번호').Trim()
+            if ($ans -match '^\d+$' -and [int]$ans -ge 1 -and [int]$ans -le $games.Count) { $game = $games[[int]$ans - 1]; break }
+            Write-Host '목록의 번호를 입력하세요.' -ForegroundColor Yellow
+        }
+        Write-Host ''
+    }
+    $safeName = $game.Name
+    foreach ($c in [IO.Path]::GetInvalidFileNameChars()) { $safeName = $safeName.Replace([string]$c, '') }
+
     # --- Resolution choice (width x height @ refresh rate).
     # The launcher itself remembers the current mode at run time and returns to it (a -> b -> a).
     $cur = [DisplayModes]::Current($device)
@@ -142,39 +184,38 @@ public static class DisplayModes {
         $w = $pick.W; $h = $pick.H; $hz = $pick.Hz
 
         Write-Host ''
+        Write-Host "  게임             : $($game.Name)"
         Write-Host "  모니터           : $($mon.Name)"
         Write-Host "  게임 실행 해상도 : ${w}x${h}@${hz} ($(Format-Ratio $w $h))"
         Write-Host "  되돌아갈 해상도  : 실행할 때의 해상도 (지금은 ${curW}x${curH}@${curHz})"
-        Write-Host "  바로가기         : 바탕화면\트릭컬 리바이브 (${w}x${h}@${hz})"
+        Write-Host "  바로가기         : 바탕화면\${safeName} (${w}x${h}@${hz})"
         $ok = (Read-Host '맞습니까? (Y/N)').Trim()
         if ($ok -match '^[Yy]') { break }
     }
 
-    # --- Icon: the game's icon from the Google Play Games data folder (recorded in the registry)
-    $iconArg = @()
-    $gpg = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\GooglePlayGames' -ErrorAction SilentlyContinue
-    if ($gpg -and $gpg.InstallLocation) {
-        $icon = Get-ChildItem (Join-Path $gpg.InstallLocation 'data') -Recurse -Filter 'com.epidgames.trickcalrevive.appicon.ico' -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($icon) {
-            Copy-Item $icon.FullName (Join-Path $here 'trickcal.ico') -Force
-            $iconArg = @("/win32icon:$(Join-Path $here 'trickcal.ico')")
-        }
-    }
-    if (-not $iconArg) { Write-Host '게임 아이콘을 못 찾아 기본 아이콘으로 빌드합니다.' -ForegroundColor Yellow }
-
     # --- Build
-    & $csc /nologo /target:winexe /optimize+ /codepage:65001 "/out:$exe" /r:System.Windows.Forms.dll $iconArg (Join-Path $here 'TrickcalLauncher.cs')
+    & $csc /nologo /target:winexe /optimize+ /codepage:65001 "/out:$exe" /r:System.Windows.Forms.dll (Join-Path $here 'GpbLauncher.cs')
     if ($LASTEXITCODE -ne 0) { throw "빌드 실패 (csc 코드 $LASTEXITCODE)" }
 
+    # --- Shortcut icon: the game's icon copied from its Start Menu shortcut, if it has one.
+    $iconLocation = "$exe,0"
+    if ($game.Icon -and (Test-Path $game.Icon)) {
+        $iconsDir = Join-Path $here 'icons'
+        if (-not (Test-Path $iconsDir)) { New-Item -ItemType Directory -Path $iconsDir | Out-Null }
+        $iconFile = Join-Path $iconsDir "$($game.Package).ico"
+        Copy-Item $game.Icon $iconFile -Force
+        $iconLocation = "$iconFile,0"
+    }
+
     # --- Desktop shortcut
-    $lnkPath = Join-Path ([Environment]::GetFolderPath('Desktop')) "트릭컬 리바이브 (${w}x${h}@${hz}).lnk"
+    $lnkPath = Join-Path ([Environment]::GetFolderPath('Desktop')) "${safeName} (${w}x${h}@${hz}).lnk"
     $sh = New-Object -ComObject WScript.Shell
     $lnk = $sh.CreateShortcut($lnkPath)
     $lnk.TargetPath = $exe
-    $lnk.Arguments = "--width $w --height $h --hz $hz"
+    $lnk.Arguments = "--game $($game.Package) --width $w --height $h --hz $hz"
     if ($mons.Count -gt 1) { $lnk.Arguments += " --monitor $($mon.Id)" }
     $lnk.WorkingDirectory = $here
-    $lnk.IconLocation = "$exe,0"
+    $lnk.IconLocation = $iconLocation
     $lnk.Description = "${w}x${h}@${hz} 화면으로 실행"
     $lnk.Save()
 

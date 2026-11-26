@@ -1,11 +1,12 @@
-// Trickcal Revive launcher for Google Play Games (beta).
+// Google Play Games (beta) aspect-ratio launcher.
 // 1) Remember the monitor's current mode, then switch to the requested resolution
 //    (usually a custom resolution made in the GPU control panel)
 // 2) Launch the game through its googleplaygames:// link
 // 3) When the game window (crosvm.exe) shows up, close the Google Play Games launcher window (client.exe)
 // 4) Switch the monitor back to the mode remembered in step 1
 //
-// Args:          --width <px> --height <px>   (the resolution to launch the game at;
+// Args:          --game <package>            (required; the game's package name, e.g. com.example.game)
+//                --width <px> --height <px>   (the resolution to launch the game at;
 //                without them the resolution is left as is and only steps 2-3 run)
 // Optional args: --monitor <id> (default: primary monitor; a stable monitor ID such as
 //                  DEL428C#5&168f06e6&4&UID4357, matched against the monitor's device ID, so it
@@ -16,15 +17,15 @@ using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
 
-static class TrickcalLauncher
+static class GpbLauncher
 {
-    const string GameUri = "googleplaygames://launch/?id=com.epidgames.trickcalrevive&lid=2&pid=1";
     // Google Play Games always installs its program here; only the data folder is user-chosen.
     const string Bootstrapper = @"C:\Program Files\Google\Play Games\Bootstrapper.exe";
-    const string Title = "Trickcal Launcher";
+    const string Title = "GPB Launcher";
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     struct DEVMODE
@@ -74,12 +75,14 @@ static class TrickcalLauncher
     {
         string device = Screen.PrimaryScreen.DeviceName;
         string monitor = null;
+        string game = null;
         int width = 0, height = 0, hz = 0, settle = 0, timeout = 90;
         for (int i = 0; i + 1 < args.Length; i += 2)
         {
             string v = args[i + 1];
             switch (args[i].ToLowerInvariant())
             {
+                case "--game": game = v; break;
                 case "--monitor": monitor = v; break;
                 case "--width": width = int.Parse(v); break;
                 case "--height": height = int.Parse(v); break;
@@ -88,6 +91,13 @@ static class TrickcalLauncher
                 case "--timeout": timeout = int.Parse(v); break;
             }
         }
+
+        if (string.IsNullOrEmpty(game) || !Regex.IsMatch(game, "^[A-Za-z0-9._]+$"))
+        {
+            Error("실행할 게임을 지정하세요.\n예: GpbLauncher.exe --game com.example.game");
+            return 1;
+        }
+        string uri = "googleplaygames://launch/?id=" + game + "&lid=1&pid=1";
 
         if (!string.IsNullOrEmpty(monitor))
         {
@@ -103,7 +113,7 @@ static class TrickcalLauncher
         bool change = width > 0 || height > 0;
         if (change && (width <= 0 || height <= 0))
         {
-            Error("--width와 --height를 함께 지정하세요.\n예: TrickcalLauncher.exe --width 3840 --height 1728");
+            Error("--width와 --height를 함께 지정하세요.\n예: GpbLauncher.exe --game com.example.game --width 3840 --height 1728");
             return 1;
         }
 
@@ -152,23 +162,23 @@ static class TrickcalLauncher
         {
             if (change) Thread.Sleep(300); // let the desktop settle before the game reads the screen size
             if (System.IO.File.Exists(Bootstrapper))
-                Process.Start(Bootstrapper, "\"" + GameUri + "\"");
+                Process.Start(Bootstrapper, "\"" + uri + "\"");
             else
-                Process.Start(new ProcessStartInfo(GameUri) { UseShellExecute = true });
+                Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
 
             DateTime deadline = DateTime.Now.AddSeconds(timeout);
             while (DateTime.Now < deadline && FindWindow("crosvm", null) == IntPtr.Zero)
                 Thread.Sleep(100);
 
-            IntPtr game = FindWindow("crosvm", null);
-            if (game == IntPtr.Zero)
+            IntPtr gameWindow = FindWindow("crosvm", null);
+            if (gameWindow == IntPtr.Zero)
             {
                 message = timeout + "초 안에 게임 창이 뜨지 않았습니다." + (change ? " 해상도를 되돌렸습니다." : "");
                 return 2;
             }
 
             // Google Play Games opens the game on the monitor it was last on, and the ratio follows that monitor.
-            string gameScreen = Screen.FromHandle(game).DeviceName;
+            string gameScreen = Screen.FromHandle(gameWindow).DeviceName;
             if (change && !string.Equals(gameScreen, device, StringComparison.OrdinalIgnoreCase))
                 message = "게임 창이 다른 모니터에 떠서 화면비가 바뀌지 않았을 수 있습니다.\n" +
                           "게임 창을 원하는 모니터로 옮겨 두고 게임을 끈 뒤 다시 실행하세요.";
