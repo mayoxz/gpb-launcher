@@ -109,7 +109,9 @@ public static class DisplayModes {
         for ($i = 0; $i -lt $list.Count; $i++) {
             $m = $list[$i]
             $info = if (Test-Current $m) { "($(Format-Ratio $m.W $m.H), 현재)" } else { "($(Format-Ratio $m.W $m.H))" }
-            Write-Host ('  {0,3}) {1,5} x {2,-5} @{3,-4} {4}' -f ($i + 1), $m.W, $m.H, $m.Hz, $info)
+            $line = '  {0,3}) {1,5} x {2,-5} @{3,-4} {4}' -f ($i + 1), $m.W, $m.H, $m.Hz, $info
+            # The current mode uses the same color as the "현재 해상도" line above.
+            if (Test-Current $m) { Write-Host $line -ForegroundColor Cyan } else { Write-Host $line }
         }
         $manual = $list.Count + 1
         Write-Host ('  {0,3})  직접 입력' -f $manual)
