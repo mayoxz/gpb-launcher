@@ -141,15 +141,18 @@ public static class DisplayModes {
                 }
             }
             if (-not $pick) { throw "${iw}x${ih}@${ihz} 해상도가 없습니다." }
-            if (Test-Current $pick) { throw '현재 해상도와 같습니다.' }
         }
         else { $pick = $list[[int]$ans - 1] }
-        if (Test-Current $pick) { Write-Host '현재 해상도와 같습니다. 다른 해상도를 고르세요.' -ForegroundColor Yellow; continue }
+        $same = Test-Current $pick
+        if ($same) {
+            $yn = (Read-Host '현재 해상도와 같습니다. 이 해상도로 바로가기를 만들까요? (Y/N)').Trim()
+            if ($yn -notmatch '^[Yy]') { continue }
+        }
         $w = $pick.W; $h = $pick.H; $hz = $pick.Hz
 
         Write-Host ''
         Write-Host "  게임             : $($game.Name)"
-        Write-Host "  게임 실행 해상도 : ${w}x${h}@${hz} ($(Format-Ratio $w $h))"
+        Write-Host "  게임 실행 해상도 : ${w}x${h}@${hz} ($(Format-Ratio $w $h)$(if ($same) { ', 현재와 같음' }))"
         Write-Host "  되돌아갈 해상도  : 실행할 때의 해상도 (지금은 ${curW}x${curH}@${curHz})"
         Write-Host "  바로가기         : 이 폴더\${safeName} (${w}x${h}@${hz})"
         $ok = (Read-Host '맞습니까? (Y/N)').Trim()

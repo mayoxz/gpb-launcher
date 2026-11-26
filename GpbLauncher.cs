@@ -87,7 +87,8 @@ static class GpbLauncher
         if (string.IsNullOrEmpty(game))
         {
             // Opened directly (e.g. double-clicked) instead of through a shortcut made by build.ps1.
-            Error(NoShortcutMessage());
+            Error("이 파일은 직접 실행하지 않고, 해상도가 지정된 바로가기로 실행합니다.\n" +
+                  "같은 폴더의 바로가기를 실행하세요. 바로가기가 없으면 build.ps1로 만드세요.");
             return 1;
         }
         if (!Regex.IsMatch(game, "^[A-Za-z0-9._]+$"))
@@ -230,29 +231,6 @@ static class GpbLauncher
                 ChangeDisplaySettingsEx(device, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero);
             if (message != null) Error(message);
         }
-    }
-
-    // Explains that this exe runs through its shortcuts, and lists the ones next to it
-    // (build.ps1 names them "<exe name> (WxH@Hz).lnk").
-    static string NoShortcutMessage()
-    {
-        string exePath = Application.ExecutablePath;
-        string dir = System.IO.Path.GetDirectoryName(exePath);
-        string baseName = System.IO.Path.GetFileNameWithoutExtension(exePath);
-        StringBuilder list = new StringBuilder();
-        try
-        {
-            foreach (string lnk in System.IO.Directory.GetFiles(dir, baseName + " (*).lnk"))
-                list.Append("  ").Append(System.IO.Path.GetFileNameWithoutExtension(lnk)).Append('\n');
-        }
-        catch (Exception) { }
-
-        string msg = "이 파일은 직접 실행하지 않고, 해상도가 지정된 바로가기로 실행합니다.\n\n";
-        if (list.Length > 0)
-            msg += "같은 폴더의 바로가기를 실행하세요:\n" + list + "\n다른 해상도가 필요하면 build.ps1로 바로가기를 새로 만드세요.";
-        else
-            msg += "build.ps1을 실행해서 바로가기를 만드세요.";
-        return msg;
     }
 
     static DEVMODE NewDevMode()
