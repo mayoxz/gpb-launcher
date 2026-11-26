@@ -1,2 +1,4 @@
 # Build output: one exe per game
 *.exe
+# Shortcuts made by build.ps1 (per user, per resolution)
+*.lnk

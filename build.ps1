@@ -151,7 +151,7 @@ public static class DisplayModes {
         Write-Host "  게임             : $($game.Name)"
         Write-Host "  게임 실행 해상도 : ${w}x${h}@${hz} ($(Format-Ratio $w $h))"
         Write-Host "  되돌아갈 해상도  : 실행할 때의 해상도 (지금은 ${curW}x${curH}@${curHz})"
-        Write-Host "  바로가기         : 바탕화면\${safeName} (${w}x${h}@${hz})"
+        Write-Host "  바로가기         : 이 폴더\${safeName} (${w}x${h}@${hz})"
         $ok = (Read-Host '맞습니까? (Y/N)').Trim()
         if ($ok -match '^[Yy]') { break }
     }
@@ -165,8 +165,8 @@ public static class DisplayModes {
     & $csc $cscArgs
     if ($LASTEXITCODE -ne 0) { throw "빌드 실패 (csc 코드 $LASTEXITCODE)" }
 
-    # --- Desktop shortcut: runs this game's exe and takes the icon embedded in it.
-    $lnkPath = Join-Path ([Environment]::GetFolderPath('Desktop')) "${safeName} (${w}x${h}@${hz}).lnk"
+    # --- Shortcut in this folder: runs this game's exe and takes the icon embedded in it.
+    $lnkPath = Join-Path $here "${safeName} (${w}x${h}@${hz}).lnk"
     $sh = New-Object -ComObject WScript.Shell
     $lnk = $sh.CreateShortcut($lnkPath)
     $lnk.TargetPath = $exe
