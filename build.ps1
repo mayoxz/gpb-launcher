@@ -116,17 +116,29 @@ public static class DisplayModes {
         if ([int]$ans -eq $manual) {
             $iw = (Read-Host '가로').Trim()
             $ih = (Read-Host '세로').Trim()
-            $ihz = (Read-Host "주사율 [$curHz]").Trim(); if (-not $ihz) { $ihz = "$curHz" }
-            $pick = $null
-            if ($iw -match '^\d+$' -and $ih -match '^\d+$' -and $ihz -match '^\d+$') {
-                $target = "${iw}x${ih}@${ihz}"
-                $onAny = $false
-                foreach ($s in [System.Windows.Forms.Screen]::AllScreens) {
-                    if ([DisplayModes]::Modes($s.DeviceName) -contains $target) { $onAny = $true; break }
-                }
-                if ($onAny) { $pick = [pscustomobject]@{ W = [int]$iw; H = [int]$ih; Hz = [int]$ihz } }
+            if ($iw -notmatch '^\d+$' -or $ih -notmatch '^\d+$') { throw '가로와 세로는 숫자로 입력하세요.' }
+
+            # Same order as the launcher: primary monitor first, then the others.
+            # The first monitor that has this width x height decides the default refresh rate.
+            $screens = @([System.Windows.Forms.Screen]::AllScreens | Sort-Object { -not $_.Primary })
+            $found = $null
+            foreach ($s in $screens) {
+                $hzs = @([DisplayModes]::Modes($s.DeviceName) | Where-Object { $_ -like "${iw}x${ih}@*" } | ForEach-Object { [int](($_ -split '@')[1]) })
+                if ($hzs.Count -gt 0) { $found = [pscustomobject]@{ Device = $s.DeviceName; Hzs = $hzs }; break }
             }
-            if (-not $pick) { throw "${iw}x${ih}@${ihz} 해상도가 연결된 모니터에 없습니다. (GPU 제어판에서 사용자 지정 해상도를 먼저 만드세요)" }
+            if (-not $found) { throw "${iw}x${ih} 해상도가 없습니다." }
+            $scrHz = [DisplayModes]::Current($found.Device)[2]
+            $defHz = if ($found.Hzs -contains $scrHz) { $scrHz } else { ($found.Hzs | Measure-Object -Maximum).Maximum }
+
+            $ihz = (Read-Host "주사율 [$defHz]").Trim(); if (-not $ihz) { $ihz = "$defHz" }
+            $pick = $null
+            if ($ihz -match '^\d+$') {
+                $target = "${iw}x${ih}@${ihz}"
+                foreach ($s in $screens) {
+                    if ([DisplayModes]::Modes($s.DeviceName) -contains $target) { $pick = [pscustomobject]@{ W = [int]$iw; H = [int]$ih; Hz = [int]$ihz }; break }
+                }
+            }
+            if (-not $pick) { throw "${iw}x${ih}@${ihz} 해상도가 없습니다." }
             if (Test-Current $pick) { throw '현재 해상도와 같습니다.' }
         }
         else { $pick = $list[[int]$ans - 1] }
