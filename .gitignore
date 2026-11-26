@@ -1,4 +1,2 @@
-# Build output (build.ps1 recreates these)
-GpbLauncher.exe
-# Game icons copied from the Start Menu shortcuts at build time
-icons/
+# Build output: one exe per game
+*.exe

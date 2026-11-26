@@ -1,6 +1,7 @@
-﻿# Builds GpbLauncher.exe with the .NET Framework compiler that ships with Windows,
-# asks for the monitor, the game (from the Google Play Games Start Menu shortcuts), and the
-# target resolution (width x height @ refresh rate), and creates a desktop shortcut that uses them.
+﻿# Builds one exe per game, named after the game, with the game's icon embedded, using the
+# .NET Framework compiler that ships with Windows. It asks for the monitor, the game (from the
+# Google Play Games Start Menu shortcuts), and the target resolution (width x height @ refresh
+# rate), and creates a desktop shortcut that runs that exe.
 # Saved as UTF-8 with BOM so Windows PowerShell 5.1 reads the Korean text correctly.
 $ErrorActionPreference = 'Stop'
 
@@ -9,7 +10,6 @@ try {
     $csc  = @("$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe", "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe") |
             Where-Object { Test-Path $_ } | Select-Object -First 1
     if (-not $csc) { throw 'csc.exe(.NET Framework 4)를 찾을 수 없습니다.' }
-    $exe  = Join-Path $here 'GpbLauncher.exe'
 
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type @'
@@ -97,7 +97,7 @@ public static class DisplayModes {
     $device = $mon.Device
 
     # --- Game choice: Google Play Games puts one Start Menu shortcut per installed game.
-    # The shortcut's link target carries the package name, and its icon can be copied for our own shortcut.
+    # The shortcut's link target carries the package name, and its icon is embedded into our exe.
     $games = @()
     $dirs = @(
         (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Google Play Games'),
@@ -193,21 +193,16 @@ public static class DisplayModes {
         if ($ok -match '^[Yy]') { break }
     }
 
-    # --- Build
-    & $csc /nologo /target:winexe /optimize+ /codepage:65001 "/out:$exe" /r:System.Windows.Forms.dll (Join-Path $here 'GpbLauncher.cs')
+    # --- Build: one exe per game, named after the game, with the game's icon embedded.
+    $exe = Join-Path $here "$safeName.exe"
+    $cscArgs = @('/nologo', '/target:winexe', '/optimize+', '/codepage:65001', "/out:$exe", '/r:System.Windows.Forms.dll')
+    if ($game.Icon -and (Test-Path $game.Icon)) { $cscArgs += "/win32icon:$($game.Icon)" }
+    else { Write-Host '게임 아이콘을 찾지 못해 아이콘 없이 빌드합니다.' -ForegroundColor Yellow }
+    $cscArgs += (Join-Path $here 'GpbLauncher.cs')
+    & $csc $cscArgs
     if ($LASTEXITCODE -ne 0) { throw "빌드 실패 (csc 코드 $LASTEXITCODE)" }
 
-    # --- Shortcut icon: the game's icon copied from its Start Menu shortcut, if it has one.
-    $iconLocation = "$exe,0"
-    if ($game.Icon -and (Test-Path $game.Icon)) {
-        $iconsDir = Join-Path $here 'icons'
-        if (-not (Test-Path $iconsDir)) { New-Item -ItemType Directory -Path $iconsDir | Out-Null }
-        $iconFile = Join-Path $iconsDir "$($game.Package).ico"
-        Copy-Item $game.Icon $iconFile -Force
-        $iconLocation = "$iconFile,0"
-    }
-
-    # --- Desktop shortcut
+    # --- Desktop shortcut: runs this game's exe and takes the icon embedded in it.
     $lnkPath = Join-Path ([Environment]::GetFolderPath('Desktop')) "${safeName} (${w}x${h}@${hz}).lnk"
     $sh = New-Object -ComObject WScript.Shell
     $lnk = $sh.CreateShortcut($lnkPath)
@@ -215,7 +210,7 @@ public static class DisplayModes {
     $lnk.Arguments = "--game $($game.Package) --width $w --height $h --hz $hz"
     if ($mons.Count -gt 1) { $lnk.Arguments += " --monitor $($mon.Id)" }
     $lnk.WorkingDirectory = $here
-    $lnk.IconLocation = $iconLocation
+    $lnk.IconLocation = "$exe,0"
     $lnk.Description = "${w}x${h}@${hz} 화면으로 실행"
     $lnk.Save()
 
