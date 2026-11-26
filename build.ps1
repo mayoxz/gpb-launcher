@@ -101,6 +101,8 @@ public static class DisplayModes {
     # Other refresh rates go through manual entry.
     $list = @($all | Where-Object { $_.W -eq $curW -or $_.H -eq $curH } |
               Group-Object { "$($_.W)x$($_.H)" } | ForEach-Object { $_.Group[0] })
+    # The current mode always comes first as 1).
+    $list = @(@($all | Where-Object { Test-Current $_ } | Select-Object -First 1) + @($list | Where-Object { -not (Test-Current $_) }))
     while ($true) {
         Write-Host ''
         Write-Host "바꿀 해상도:"
