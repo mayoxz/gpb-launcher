@@ -161,8 +161,16 @@ public static class DisplayModes {
     $cscArgs = @('/nologo', '/target:winexe', '/optimize+', '/codepage:65001', "/out:$exe", '/r:System.Windows.Forms.dll')
     if ($game.Icon -and (Test-Path $game.Icon)) { $cscArgs += "/win32icon:$($game.Icon)" }
     else { Write-Host '게임 아이콘을 찾지 못해 아이콘 없이 빌드합니다.' -ForegroundColor Yellow }
+    # File description (shown in Task Manager and file properties), generated per game.
+    $desc = ("$($game.Name) 화면비 런처 (GPB Launcher)").Replace('\', '\\').Replace('"', '\"')
+    $infoCs = Join-Path ([IO.Path]::GetTempPath()) "gpb-launcher-info-$PID.cs"
+    $info = "using System.Reflection;`n" +
+            "[assembly: AssemblyTitle(""$desc"")]`n" +
+            "[assembly: AssemblyProduct(""GPB Launcher"")]`n"
+    [IO.File]::WriteAllText($infoCs, $info, (New-Object Text.UTF8Encoding $true))
     $cscArgs += (Join-Path $here 'GpbLauncher.cs')
-    & $csc $cscArgs
+    $cscArgs += $infoCs
+    try { & $csc $cscArgs } finally { Remove-Item $infoCs -ErrorAction SilentlyContinue }
     if ($LASTEXITCODE -ne 0) { throw "빌드 실패 (csc 코드 $LASTEXITCODE)" }
 
     # --- Shortcut in this folder: runs this game's exe and takes the icon embedded in it.
