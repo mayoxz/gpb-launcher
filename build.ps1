@@ -145,7 +145,8 @@ public static class DisplayModes {
         else { $pick = $list[[int]$ans - 1] }
         $same = Test-Current $pick
         if ($same) {
-            $yn = (Read-Host '현재 해상도와 같습니다. 이 해상도로 바로가기를 만들까요? (Y/N)').Trim()
+            Write-Host '현재 해상도와 같습니다. 이 해상도로 바로가기를 만들까요? (Y/N): ' -ForegroundColor Yellow -NoNewline
+            $yn = ([string](Read-Host)).Trim()
             if ($yn -notmatch '^[Yy]') { continue }
         }
         $w = $pick.W; $h = $pick.H; $hz = $pick.Hz
